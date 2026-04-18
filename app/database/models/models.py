@@ -1,6 +1,6 @@
 from datetime import date
 from sqlalchemy.orm import Mapped, mapped_column, declarative_base
-from sqlalchemy.types import Date
+from sqlalchemy.types import Date, String
 from sqlalchemy import func
 
 Base = declarative_base()
@@ -36,8 +36,8 @@ class SpimexTradingResults(CreatedUpdated):
 
     __tablename__ = "spimex_trading_results"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    exchange_product_id: Mapped[str]
+    exchange_product_id: Mapped[str] = mapped_column(String(), primary_key=True)
+    date: Mapped["date"] = mapped_column(Date(), primary_key=True)  # Дата торгов
     exchange_product_name: Mapped[str]
     oil_id: Mapped[str]  # exchange_product_id[:4]
     delivery_basis_id: Mapped[str]  # exchange_product_id[4:7]
@@ -46,7 +46,6 @@ class SpimexTradingResults(CreatedUpdated):
     volume: Mapped[int]
     total: Mapped[int]
     count: Mapped[int]
-    date: Mapped["date"] = mapped_column(Date())  # Дата торгов
 
     def __init__(
         self,

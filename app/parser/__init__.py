@@ -1,1 +1,1 @@
-from .parser import DocType, ParseResult, SomeFilter, find_docs
+from .parser import DocType, ParseResult, YearFilter, find_docs

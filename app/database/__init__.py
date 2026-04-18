@@ -1,1 +1,1 @@
-from .database import DBSession, create_all
+from .database import DBAsyncSession, create_all_tables
