@@ -6,13 +6,13 @@ load_dotenv()
 
 
 class Settings:
-    DB_USER = os.getenv("DB_USER")
-    DB_PASS = os.getenv("DB_PASS")
-    DB_HOST = os.getenv("DB_HOST")
-    DB_PORT = os.getenv("DB_PORT")
-    DB_NAME = os.getenv("DB_NAME")
-    DB_URI: str
+    def __init__(self):
+        self.DB_USER = os.environ.get("DB_USER")
+        self.DB_PASS = os.environ.get("DB_PASS")
+        self.DB_HOST = os.environ.get("DB_HOST")
+        self.DB_PORT = os.environ.get("DB_PORT")
+        self.DB_NAME = os.environ.get("DB_NAME")
+        self.DB_URI = f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASS}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
 
 settings = Settings()
-settings.DB_URI = f"postgresql://{settings.DB_USER}:{settings.DB_PASS}@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
