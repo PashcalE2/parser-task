@@ -1,1 +1,3 @@
-from .parser import DocType, ParseResult, YearFilter, find_docs
+from .parser import find_documents
+from .types import DocType, ParseResult, IResultFilter, DownloadedDocumentInfo
+from .download import download_documents

@@ -1,19 +1,21 @@
-from typing import Protocol
-import requests
-from requests import Response
-import pandas as pd
+import asyncio
+from asyncio import TaskGroup
+from typing import Iterable, Protocol
 from pandas import DataFrame
+from datetime import date
+import pandas as pd
 import camelot
-from app.parser import DocType
+from app.parser import DocType, DownloadedDocumentInfo
 from app.database.models import SpimexTradingResults
-from app.parser import ParseResult
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 class IDataSaver(Protocol):
-    def save_all(self, objs: list[SpimexTradingResults]) -> None: ...
-
-
-storage_dir: str = ".reports"
+    @staticmethod
+    async def save_all(objs: list[SpimexTradingResults]) -> None: ...
 
 
 target_columns_dict = {
@@ -34,54 +36,97 @@ target_columns = [
 ]
 
 
-def download_doc(doc_data: ParseResult):
-    response: Response = requests.get(doc_data.url)
-    filepath = f"./{storage_dir}/{doc_data.filename}"
-    with open(filepath, "wb") as file:
-        file.write(response.content)
-    return filepath
+class IDocumentReader(Protocol):
+    @staticmethod
+    def check_compatible(date_: date) -> bool: ...
+
+    @staticmethod
+    async def read(filepath: str) -> DataFrame: ...
 
 
-def read_xls(filepath: str):
-    df: DataFrame = pd.read_excel(filepath, dtype=str)
-    df = df.dropna(axis=1, how="all")
+class XLSReader(IDocumentReader):
+    @staticmethod
+    def check_compatible(date_: date) -> bool:
+        return True
 
-    target_table_start = df.loc[
-        df[df.columns[0]] == "Единица измерения: Метрическая тонна"
-    ].index.start
+    @staticmethod
+    async def read(filepath: str) -> DataFrame:
+        def read_excel() -> DataFrame:
+            return pd.read_excel(filepath, dtype=str)
 
-    df = df.iloc[target_table_start + 1 :]
-    df = DataFrame(df.values[2:], columns=df.iloc[0].values)
-    df = df[target_columns]
+        loop = asyncio.get_running_loop()
+        df: DataFrame = await loop.run_in_executor(None, read_excel)
+        df = df.dropna(axis=1, how="all")
 
-    target_table_end = df.loc[df[df.columns[0]] == "Итого:"].index.start
-    df = df.iloc[:target_table_end]
+        # Поиск нужной таблицы
+        target_table_start = df.loc[
+            df[df.columns[0]] == "Единица измерения: Метрическая тонна"
+        ].index.start
 
-    return df
+        # Удаление лишних строк, добавление названий столбцов
+        df = df.iloc[target_table_start + 1 :]
+        df = DataFrame(df.values[2:], columns=df.iloc[0].values)
+        df = df[target_columns]
 
+        target_table_end = df.loc[df[df.columns[0]] == "Итого:"].index.start
+        df = df.iloc[:target_table_end]
 
-def read_pdf(filepath: str):
-    data = camelot.read_pdf(filepath, pages="all")
-
-    # В таких файлах первые две таблицы не те что надо
-    df: DataFrame = pd.concat(
-        (table.df for table in data._tables[2:]), ignore_index=True
-    )
-
-    df = DataFrame(df.values[2:], columns=df.iloc[0].values)
-
-    return df
+        return df
 
 
-def read_doc(doc_data: ParseResult):
-    filepath = download_doc(doc_data)
+class PDFReader(IDocumentReader):
+    @staticmethod
+    def check_compatible(date_: date) -> bool:
+        return True
 
-    result: list[SpimexTradingResults]
-    df: DataFrame
-    if filepath.endswith(DocType.xls):
-        df = read_xls(filepath)
-    elif filepath.endswith(DocType.pdf):
-        df = read_pdf(filepath)
+    @staticmethod
+    async def read(filepath: str) -> DataFrame:
+        logger.info("Reading PDF using camelot")
+
+        def read_pdf():
+            return camelot.read_pdf(filepath, pages="all")
+
+        loop = asyncio.get_running_loop()
+        data = await loop.run_in_executor(None, read_pdf)
+
+        logger.info("Looking for table")
+        # В таких файлах первые несколько таблиц не те что надо
+        wanted_table_start = 0
+        while data._tables[wanted_table_start].page == 1:
+            wanted_table_start += 1
+        wanted_table_start -= 1
+
+        logger.info("Found wanted table: %d", wanted_table_start)
+
+        df: DataFrame = pd.concat(
+            (table.df for table in data._tables[wanted_table_start:]),
+            ignore_index=True,
+        )
+        df = DataFrame(df.values[2:], columns=df.iloc[0].values)
+        df = df[target_columns]
+
+        logger.info("Converted to DataFrame")
+
+        return df
+
+
+document_readers: dict[DocType, list[IDocumentReader]] = {
+    DocType.xls: [XLSReader],
+    DocType.pdf: [PDFReader],
+}
+
+
+def choose_reader(info: DownloadedDocumentInfo) -> IDocumentReader:
+    for reader in document_readers[info.type]:
+        if reader.check_compatible(info.date):
+            return reader
+    raise
+
+
+async def read_document(info: DownloadedDocumentInfo) -> list[SpimexTradingResults]:
+    logger.info("Reading document: %s", info.filepath)
+    reader = choose_reader(info)
+    df: DataFrame = await reader.read(info.filepath)
 
     count_column_name = target_columns_dict["count"]
     df[count_column_name] = df[count_column_name].replace("-", "0").astype(int)
@@ -95,13 +140,27 @@ def read_doc(doc_data: ParseResult):
             volume=line[3],
             total=line[4],
             count=line[5],
-            date=doc_data.date,
+            date=info.date,
         )
         for line in df.values
     ]
     return result
 
 
-def read_docs_and_save(docs_data: list[ParseResult], data_saver: IDataSaver):
-    for data in docs_data:
-        data_saver.save_all(read_doc(data))
+async def read_document_and_save(
+    document_info: DownloadedDocumentInfo,
+    data_saver: IDataSaver,
+):
+    trading_results = await read_document(document_info)
+    await data_saver.save_all(trading_results)
+
+
+async def read_documents_and_save(
+    documents_info: Iterable[DownloadedDocumentInfo],
+    data_saver: IDataSaver,
+) -> None:
+    async with TaskGroup() as group:
+        _ = [
+            group.create_task(read_document_and_save(info, data_saver))
+            for info in documents_info
+        ]

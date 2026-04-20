@@ -1,12 +1,10 @@
-from dataclasses import dataclass
-from datetime import date, datetime
-from enum import StrEnum
-from typing import Protocol, Generator
-from http import HTTPStatus
-from bs4 import BeautifulSoup, Tag
-from aiohttp import ClientRequest, ClientSession, ClientResponse, TCPConnector
-import asyncio
 import logging
+from datetime import datetime
+from bs4 import BeautifulSoup, Tag
+from aiohttp import ClientSession
+
+from app.utils import retry_middleware
+from .types import IResultFilter, ParseResult
 
 
 logger = logging.getLogger(__name__)
@@ -29,19 +27,6 @@ N > 410 => 200-OK, нет файлов
 
 N не число => 200-OK, N = 1
 """
-
-
-class DocType(StrEnum):
-    xls = "xls"
-    pdf = "pdf"
-
-
-@dataclass
-class ParseResult:
-    url: str
-    filename: str
-    date: "date"
-    type: DocType
 
 
 def parse_page(html: str) -> list[ParseResult]:
@@ -67,32 +52,7 @@ def parse_page(html: str) -> list[ParseResult]:
     return result
 
 
-class IResultFilter(Protocol):
-    def filter_all(self, objs: list[ParseResult]) -> Generator[ParseResult]: ...
-
-
-class YearFilter(IResultFilter):
-    def filter_all(self, objs: list[ParseResult]) -> Generator[ParseResult]:
-        return (obj for obj in objs if obj.date.year >= 2023)
-
-
-async def _retry_middleware(
-    request: ClientRequest,
-    handler,
-) -> ClientResponse:
-    for i in range(3):
-        try:
-            response: ClientResponse = await handler(request)
-            if response.status == HTTPStatus.OK:
-                return response
-            logger.warning("%s. Retry attempt #%d", f"{response.status=}", i + 1)
-            await asyncio.sleep(0.5)
-        except asyncio.CancelledError:
-            raise
-    raise Exception()
-
-
-async def find_docs(
+async def find_documents(
     filter: IResultFilter,
     start_page: int = 1,
     end_page: int = 0,
@@ -108,7 +68,7 @@ async def find_docs(
         response_text: str
 
         logger.info("Starting async http client")
-        async with ClientSession(middlewares=[_retry_middleware]) as session:
+        async with ClientSession(middlewares=[retry_middleware]) as session:
             async with session.get(
                 url=REQUEST_URL,
                 params=make_request_param(page),
