@@ -38,5 +38,5 @@ async def download_documents(
 def ensure_download_directory():
     try:
         os.mkdir(f"./{STORAGE_DIR}")
-    except FileExistsError as e:
+    except FileExistsError:
         pass
