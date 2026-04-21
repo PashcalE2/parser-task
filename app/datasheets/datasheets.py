@@ -1,6 +1,5 @@
 import asyncio
-from asyncio import TaskGroup
-from typing import Iterable, Protocol
+from typing import Protocol
 from pandas import DataFrame
 from datetime import date
 import pandas as pd
@@ -86,8 +85,9 @@ class PDFReader(IDocumentReader):
         def read_pdf():
             return camelot.read_pdf(filepath, pages="all")
 
-        loop = asyncio.get_running_loop()
-        data = await loop.run_in_executor(None, read_pdf)
+        # loop = asyncio.get_running_loop()
+        # data = await loop.run_in_executor(None, read_pdf)
+        data = read_pdf()
 
         logger.info("Looking for table")
         # В таких файлах первые несколько таблиц не те что надо
@@ -145,22 +145,3 @@ async def read_document(info: DownloadedDocumentInfo) -> list[SpimexTradingResul
         for line in df.values
     ]
     return result
-
-
-async def read_document_and_save(
-    document_info: DownloadedDocumentInfo,
-    data_saver: IDataSaver,
-):
-    trading_results = await read_document(document_info)
-    await data_saver.save_all(trading_results)
-
-
-async def read_documents_and_save(
-    documents_info: Iterable[DownloadedDocumentInfo],
-    data_saver: IDataSaver,
-) -> None:
-    async with TaskGroup() as group:
-        _ = [
-            group.create_task(read_document_and_save(info, data_saver))
-            for info in documents_info
-        ]

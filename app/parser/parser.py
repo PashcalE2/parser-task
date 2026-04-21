@@ -3,7 +3,7 @@ from datetime import datetime
 from bs4 import BeautifulSoup, Tag
 from aiohttp import ClientSession
 
-from app.utils import retry_middleware
+from app.common.utils import retry_middleware
 from .types import IResultFilter, ParseResult
 
 
@@ -30,6 +30,7 @@ N не число => 200-OK, N = 1
 
 
 def parse_page(html: str) -> list[ParseResult]:
+    logger.info("Parsing links from html")
     parser = BeautifulSoup(html, features="html.parser")
     container: Tag = parser.find(class_="accordeon-inner")
     if not container:
@@ -52,6 +53,20 @@ def parse_page(html: str) -> list[ParseResult]:
     return result
 
 
+async def find_documents_on_one_page(page: int = 1):
+    response_text: str
+    logger.info("Starting async http client")
+    async with ClientSession(middlewares=[retry_middleware]) as session:
+        async with session.get(
+            url=REQUEST_URL,
+            params=make_request_param(page),
+        ) as response:
+            logger.info("Request URL = %s", response.request_info.url)
+            response_text = await response.text()
+
+    return parse_page(response_text)
+
+
 async def find_documents(
     filter: IResultFilter,
     start_page: int = 1,
@@ -65,26 +80,18 @@ async def find_documents(
     result: list[ParseResult] = []
 
     for page in range(start_page, end_page, 1):
-        response_text: str
+        try:
+            parsed_data = await find_documents_on_one_page(page)
+        except Exception as e:
+            logger.warning(e)
+        else:
+            if len(parsed_data) == 0:
+                # Потому что так устроен их сайт
+                # Запрос со страницей, которая больше максимальной => 200-OK, нет ссылок на документы
+                logger.info("No links found on this page - stop fetching")
+                break
 
-        logger.info("Starting async http client")
-        async with ClientSession(middlewares=[retry_middleware]) as session:
-            async with session.get(
-                url=REQUEST_URL,
-                params=make_request_param(page),
-            ) as response:
-                response_text = await response.text()
-
-        logger.info("Parsing links from html")
-        parsed_data = parse_page(response_text)
-
-        if len(parsed_data) == 0:
-            # Потому что так устроен их сайт
-            # Запрос со страницей, которая больше максимальной => 200-OK, нет ссылок на документы
-            logger.info("No links found on this page - stop fetching")
-            break
-
-        parsed_data = filter.filter_all(parsed_data)
-        result.extend(parsed_data)
+            parsed_data = filter.filter_all(parsed_data)
+            result.extend(parsed_data)
 
     return result

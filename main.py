@@ -2,24 +2,52 @@ import logging
 import math
 import timeit
 import asyncio
+import aiofiles.os
+from asyncio import TaskGroup
 from multiprocessing import Pool
-from typing import Generator
+from typing import Generator, Iterable
 from itertools import batched
 from sqlalchemy import insert
+from sqlalchemy.exc import IntegrityError
+from app.common.error import DateAlreadyPresentError
 from app.database import create_all_tables, SpimexTradingResults, DBAsyncSession
-from app.datasheets import read_documents_and_save, IDataSaver
+from app.datasheets import read_document, IDataSaver
 from app.parser import (
     find_documents,
     IResultFilter,
     ParseResult,
     download_documents,
+    ensure_download_directory,
     DownloadedDocumentInfo,
 )
-from app.logger_config import config
+from app.common.logger_config import config
 
 
 config()
 logger = logging.getLogger(__name__)
+
+
+async def read_document_and_save(
+    document_info: DownloadedDocumentInfo,
+    data_saver: IDataSaver,
+) -> None:
+    try:
+        trading_results = await read_document(document_info)
+        await aiofiles.os.remove(document_info.filepath)
+        await data_saver.save_all(trading_results)
+    except Exception as e:
+        logger.warning(str(e))
+
+
+async def read_documents_and_save(
+    documents_info: Iterable[DownloadedDocumentInfo],
+    data_saver: IDataSaver,
+) -> None:
+    async with TaskGroup() as group:
+        _ = [
+            group.create_task(read_document_and_save(info, data_saver))
+            for info in documents_info
+        ]
 
 
 class YearFilter(IResultFilter):
@@ -34,20 +62,23 @@ class DBSaver(IDataSaver):
         len_ = len(objs)
         logger.info("Start saving %d rows to DB", len_)
         dict_objs = (obj.to_dict() for obj in objs)
-        async with DBAsyncSession() as session:
-            await session.execute(insert(SpimexTradingResults), dict_objs)
-            await session.commit()
+        try:
+            async with DBAsyncSession() as session:
+                await session.execute(insert(SpimexTradingResults), dict_objs)
+                await session.commit()
+        except IntegrityError:
+            raise DateAlreadyPresentError(objs[0].date)
         logger.info("Finish saving %d rows to DB", len_)
 
 
-def sync_download_task(info_list) -> list[DownloadedDocumentInfo]:
-    logger.info("Start files download")
+def sync_download_task(info_list: list[ParseResult]) -> list[DownloadedDocumentInfo]:
+    logger.info("Start files downloading")
     result = asyncio.run(download_documents(info_list))
-    logger.info("Finish files download")
+    logger.info("Finish files downloading")
     return result
 
 
-def sync_read_documents_and_save(documents_data):
+def sync_read_documents_and_save(documents_data: list[DownloadedDocumentInfo]):
     logger.info("Start read and save documents")
     asyncio.run(read_documents_and_save(documents_data, DBSaver))
     logger.info("Finish read and save documents")
@@ -55,8 +86,8 @@ def sync_read_documents_and_save(documents_data):
 
 def multiprocessing_main(
     workers: int = 5,
-    start_page: int = 1,
-    end_page: int = 2,
+    start_page: int = 2,
+    end_page: int = 3,
 ):
     # Получение всех ссылок
     reports_info: list[ParseResult] = asyncio.run(
@@ -67,12 +98,19 @@ def multiprocessing_main(
         )
     )
 
-    logger.info("Reports total count: %d", len(reports_info))
+    n_reports_info = len(reports_info)
+    logger.info("Reports total count: %d", n_reports_info)
 
-    batch_size = int(math.ceil(len(reports_info) / workers))
+    if n_reports_info == 0:
+        logger.info("Not found files for downloading, exiting")
+        return
+
+    batch_size = int(math.ceil(n_reports_info / workers))
     logger.info("Batch size: %d", batch_size)
 
     # Скачивание всех файлов
+    ensure_download_directory()
+
     download_results: list[DownloadedDocumentInfo] = []
 
     with Pool(workers) as pool:

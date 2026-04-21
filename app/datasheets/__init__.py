@@ -1,1 +1,1 @@
-from .datasheets import read_documents_and_save, IDataSaver
+from .datasheets import read_document, IDataSaver
