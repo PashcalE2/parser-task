@@ -63,12 +63,17 @@ def read_xls(filepath: str):
 def read_pdf(filepath: str):
     data = camelot.read_pdf(filepath, pages="all")
 
-    # В таких файлах первые две таблицы не те что надо
+    # В таких файлах первые несколько таблиц не те что надо
+    wanted_table_start = 0
+    while data._tables[wanted_table_start].page == 1:
+        wanted_table_start += 1
+    wanted_table_start -= 1
     df: DataFrame = pd.concat(
-        (table.df for table in data._tables[2:]), ignore_index=True
+        (table.df for table in data._tables[wanted_table_start:]), ignore_index=True
     )
 
     df = DataFrame(df.values[2:], columns=df.iloc[0].values)
+    df = df[target_columns]
 
     return df
 

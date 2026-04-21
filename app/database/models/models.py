@@ -76,3 +76,17 @@ class SpimexTradingResults(CreatedUpdated):
 
     def __repr__(self) -> str:
         return f"SpimexTradingResults(id={self.id!r}, exchange_product_id={self.exchange_product_id!r}, exchange_product_name={self.exchange_product_name!r}, oil_id={self.oil_id!r}, delivery_basis_id={self.delivery_basis_id!r}, delivery_basis_name={self.delivery_basis_name!r}, delivery_type_id={self.delivery_type_id!r}, volume={self.volume!r}, total={self.total!r}, count={self.count!r}, date={self.date!r}, created_on={self.created_on!r}, updated_on={self.updated_on!r})"
+
+    def to_dict(self) -> dict:
+        return {
+            "exchange_product_id": self.exchange_product_id,
+            "date": self.date,
+            "exchange_product_name": self.exchange_product_name,
+            "oil_id": self.oil_id,
+            "delivery_basis_id": self.delivery_basis_id,
+            "delivery_basis_name": self.delivery_basis_name,
+            "delivery_type_id": self.delivery_type_id,
+            "volume": int(self.volume),
+            "total": int(self.total),
+            "count": int(self.count),
+        }

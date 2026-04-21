@@ -1,6 +1,10 @@
 import logging
 import timeit
+from sqlalchemy import insert
 from app.parser import find_docs, SomeFilter
+from app.database import DBSession
+from app.database.models import SpimexTradingResults
+from app.datasheets import IDataSaver, read_docs_and_save
 
 
 logging.basicConfig(
@@ -9,32 +13,19 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def find_docs_task(start_page, end_page):
-    result = find_docs(SomeFilter(), start_page=start_page, end_page=end_page)
-    logger.info("Found %d", len(result))
-    return result
+class DBSaver(IDataSaver):
+    def save_all(self, objs: list[SpimexTradingResults]):
+        dict_objs = (obj.to_dict() for obj in objs)
+        with DBSession() as session:
+            session.execute(insert(SpimexTradingResults), dict_objs)
+            session.commit()
 
 
-def tasks():
-    results = [
-        find_docs_task(start_page=from_, end_page=to_)
-        for from_, to_ in ((1, 2), (3, 5), (7, 10))
-    ]
-
-    logger.info(len(results))
-
-
-def run():
-    # links = await find_docs(YearFilter(), start_page=1, end_page=2)
-    # logger.info(len(links))
-
-    tasks()
-
-
-def process_main():
-    run()
+def main(start_page: int = 5, end_page: int = 6):
+    docs = find_docs(SomeFilter(), start_page, end_page)
+    read_docs_and_save(docs, DBSaver())
 
 
 if __name__ == "__main__":
-    execution_time = timeit.timeit(process_main, number=1)
+    execution_time = timeit.timeit(main, number=1)
     logger.info("Execution time: %f", execution_time)
