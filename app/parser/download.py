@@ -1,3 +1,4 @@
+import os
 from asyncio import TaskGroup, Task
 import aiofiles
 import aiohttp
@@ -32,3 +33,10 @@ async def download_documents(
         results.append(task.result())
 
     return results
+
+
+def ensure_download_directory():
+    try:
+        os.mkdir(f"./{STORAGE_DIR}")
+    except FileExistsError as e:
+        pass
